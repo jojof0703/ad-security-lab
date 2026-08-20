@@ -10,7 +10,7 @@ Build an isolated Active Directory environment that can be deliberately misconfi
 | Host | HP EliteDesk 800 G3 Mini |
 | CPU | Intel i7-6700T |
 | RAM | 24 GB DDR4-2400 SODIMM |
-| Hypervisor | Proxmox VE 9.2.5 |
+| Hypervisor | Proxmox VE 9.2.6 |
 | Uplink | USB Wi-Fi adapter |
 
 ## Network Design 
@@ -37,12 +37,16 @@ The hypervisor is the only door in, and it is authenticated.
 
 **Concept note:** the lab VMs originally couldn't be reached even after the subnet route was approved, because they had no gateway configured. Advertising a route tells the outside world how to reach the network but setting a default gateway tells the machines inside how to actually answer. Both halves are required for traffic to actually complete a round trip.
 
+**Concept note:** an unexpected power loss reset IP forwarding on the host. `net.ipv4.ip_forward` had only been flipped on at runtime with `sysctl -w`, so whenever the host rebooted, the kernel came back with the forward parameter off. No error, no obvious symptom, just Tailscale routing silently failing. The parameter itself hadn't changed, just how it was applied need to change. The right way to accomplish this, was writing the setting to a file under `/etc/sysctl.d/` instead. This let it apply automatically upon every boot. 
+
+
 ## Virtual Machines 
 | VM ID | Name | OS | Bridge | Address | Role |
 | --- | --- | --- | --- | --- | --- | 
 | 100 | `DC01` | Windows Server 2022 | `vmbr1` | `10.10.10.10` | Domain controller - `sentry.local` |
 | 101 | `CLIENT01` | Windows 11 | `vmbr1` | `10.10.10.20` | Domain-joined workstation |
-| 102 | `kali01` | Kali Linux 2026.2 | `vmbr0` + `vmbr1` | `10.0.0.131` / `10.10.10.30` | Attacker box | 
+| 102 | `kali01` | Kali Linux 2026.2 | `vmbr0` + `vmbr1` | `10.0.0.131` / `10.10.10.30` | Attacker box 
+| 107 | `wazuh01` | Ubuntu 26.04 | `vmbr0` + `vmbr1` | DHCP / `10.10.10.40` | Wazuh SIEM - manager, indexer, dashboard 
 
 `kali01` is dual-homed on purpose: one interface on the lab network to run
 enumeration against the domain, and one on the home LAN so tooling can be

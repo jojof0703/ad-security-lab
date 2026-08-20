@@ -28,6 +28,8 @@ A raw 4769 isn't a useful signal on its own, in a real domain, this event fires 
 Translating the signature to an actual Wazuh rule meant checking three fields together: the event ID itself (4769), the ticket encryption type (RC4 vs AES), and excluding service names ending in $ since Windows appends it to computer account names and not user accounts. 
 
 The rule was set to level 10, well above the generic level-3 noise most Windows activity falls into, and tagged with MITRE ATT&CK technique T1558.003, the official identifier for Kerberoasting. I also used an official Wazuh blog post containing a working Kerberoasting rule as reference. Their example had used a hard-matched `TicketOptions` field value that didn't really match my captured traffic, so I dropped that condition. 
+![Rule 100100 detail view](screenshots/detection/04-01b-rule-100100-detail.png)
+![Rule 100100 registered](screenshots/detection/04-01a-rule-100100-registered.png)
 
 ## Debugging the Pipeline
 Before the Kerberoasting rule could be tested against real traffic, 3 separate machines--`DC01`, `CLIENT01`, and `kali01`--all turned out to have clocks that were not aligned with each other, which makes timestamp-based troubleshooting effectively useless until it was resolved. To fix this time issue, I checked `DC01` first. `DC01` being the only domain controller, automatically holds the PDC Emulator role, which makes it the authoritative time source the rest of the domain syncs from. Because of that role, Windows stops manual time changes through the normal settings GUI. To get around it, I opened an elevated Powershell, stopped the Windows Time Service, set the correct time directly with `Set-Date`, restarted the service, and had to mark the clock as reliable with `w32tm /config /reliable:yes /update` so Windows Time Service would trust it going forward. With `DC01`'s clock corrected, `CLIENT01` and `kali01` just needed to resync against it. 
@@ -41,11 +43,12 @@ The real cause turned out to have nothing to do with the rule's own conditions. 
 ## Verification
 With the rule correctly attached to the rule tree, two pieces of evidence confirmed that it actually worked. 
 
-**Before/after, same real event.** Before the `if_sid` fix, a real Kerberoasting attempt against `svc-sql` fell into Wazuh's generic catch-all rule (level 2, "Unknown problem somewhere in the system") - technically logged it, but it was invisible to anyone actually watching for it. After the fix, running the exact same attack produced a properly named, level 10 alert: 
-Possible Kerberoasting RC4 service ticket requested for svc-sql by jsmith@SENTRY.LOCAL," correctly tagged with MITRE technique T1558.003. Same attack, same target account, same underlying event, only thing that changed was whether the rule was actually being evaluated. 
+**Before/after, same real event.** Before the `if_sid` fix, real Kerberoasting attempts against `svc-sql` weren't matching this rule at all, since it sat outside the tree Wazuh actually evaluates. After the fix, running the exact same attack produced a properly named, level 10 alert: 
+Possible Kerberoasting RC4 service ticket requested for `svc-sql` by `jsmith@SENTRY.LOCAL`, correctly tagged with MITRE technique T1558.003. Same attack, same target account, same underlying event, only thing that changed was whether the rule was actually being evaluated. 
+![Kerberoasting alert firing](screenshots/detection/04-02-detection-alert-after.png)
 
-**A true negative.** Just as important as catching the attack was *not* catching normal traffic. Legitimate machine-account Kerberos requests (`DC01$` and `CLIENT01$` authenticating to each other using AES) continued to fall into the generic catch-all exactly as before. The rule correctly ignored them. This matters because a detection that also fires on routine domain traffic isn't really a detection at all. 
-
+**A true negative.** Just as important as catching the attack was *not* catching normal traffic. Legitimate machine-account Kerberos requests (`DC01$` and `CLIENT01$` authenticating to each other using AES) continued to be classified under Windows' standard logon-success rule rather than the Kerberoasting rule. The rule correctly ignored them. This matters because a detection that also fires on routine domain traffic isn't really a detection at all. 
+![DC01$ true negative](screenshots/detection/04-03-dc01-true-negative.png)
 
 ## Takeaways
 The core lesson ties directly back to [The Detection Gap](#the-detection-gap): a rule is only as good as what it deliberately excludes, not just what it catches. Alerting on the raw event would have been trivial and useless. The work was in building something that told the difference between an attacker and routine traffic. 
